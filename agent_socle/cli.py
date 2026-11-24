@@ -15,7 +15,9 @@ import sys
 from datetime import datetime
 from string import Template
 
-from agent_socle import groundcover_tools, knowledge_tools, mcp_servers, odatio_docs, token_measure
+from agent_socle import (groundcover_tools, jira_guard, knowledge_tools, mcp_servers, odatio_docs, projets,
+                         publication, token_measure)
+from agent_socle.jira_tools import std_only_projects
 from agent_socle.chemins import DATA_DIR
 
 # Modèles communs à tous les agents (token_saving_rules, odatio_docs, db_access)
@@ -358,6 +360,124 @@ def share_knowledge(body: str, projet: str, doc_type: str, sujet: str, **fields)
     result = knowledge_tools.publish_knowledge(body, projet, doc_type, sujet, **fields)
     print(knowledge_tools.publish_line(result))
     return result
+
+
+# Variable .env du modèle Claude par étape (vide = modèle par défaut de Claude Code)
+CLAUDE_MODEL_ENV = {
+    "cadrage": "CLAUDE_MODEL_CADRAGE",
+    "epic-cadrage": "CLAUDE_MODEL_CADRAGE",
+    "refine": "CLAUDE_MODEL_REFINE",
+    "patch": "CLAUDE_MODEL_PATCH",
+    "generate-cucumber-postmerge": "CLAUDE_MODEL_POSTMERGE",
+    "besoin": "CLAUDE_MODEL_BESOIN",
+    "cadrage-reponses": "CLAUDE_MODEL_REFINE",
+    "generate-cucumber-client": "CLAUDE_MODEL_CUCUMBER",
+}
+
+
+# Variable .env de l'effort Claude par étape (vide = réglage de Claude Code sur le poste)
+CLAUDE_EFFORT_ENV = {step: name.replace("CLAUDE_MODEL_", "CLAUDE_EFFORT_") for step, name in CLAUDE_MODEL_ENV.items()}
+
+
+ODATIO_DOCS_STEPS = {"cadrage": "analyse", "refine": "analyse", "cadrage-reponses": "analyse",
+                     "epic-cadrage": "analyse", "patch": "patch"}
+
+
+def format_jira_context(jira_context: dict, max_chars: int) -> str:
+    """
+    Contexte Jira déjà récupéré par main.py (description, Épopée, COST), injecté dans le prompt
+    de cadrage. La taille est plafonnée et chaque troncature est signalée à l'agent.
+    """
+    if not jira_context or max_chars <= 0:
+        return ""
+
+    def clip(label: str, text: str, budget: int) -> str:
+        text = (text or "").strip()
+        if len(text) <= budget:
+            return text
+        return text[:budget].rstrip() + f"\n[... {label} TRONQUÉ(E) : {len(text) - budget} caractères non affichés ...]"
+
+    epic = jira_context.get("epic") or {}
+    costs = jira_context.get("costs") or []
+    desc_budget, epic_budget = max_chars // 2, max_chars // 5
+    cost_budget = max(max_chars - desc_budget - epic_budget, 0) // max(len(costs), 1)
+
+    parts = [
+        f"=== CONTEXTE JIRA DU TICKET {jira_context.get('issue_key', '')} (déjà récupéré) ===",
+        f"Titre : {jira_context.get('summary', '')}",
+        f"Composants : {', '.join(jira_context.get('components', [])) or 'aucun'}",
+        "## Description",
+        clip("Description", jira_context.get("description", ""), desc_budget) or "(vide)",
+    ]
+    if epic:
+        parts += [f"## Épopée {epic.get('key', '')} — {epic.get('summary', '')}",
+                  clip("Épopée", epic.get("description", ""), epic_budget) or "(description vide)"]
+    else:
+        parts.append("## Épopée : aucune trouvée par l'API")
+    if costs:
+        for cost in costs:
+            parts += [f"## COST {cost.get('key', '')} — {cost.get('summary', '')}",
+                      clip(f"COST {cost.get('key', '')}", cost.get("description", ""), cost_budget) or "(description vide)"]
+    else:
+        parts.append("## COST : aucun ticket lié trouvé par l'API")
+    parts.append("=== FIN CONTEXTE JIRA ===")
+    return "\n".join(parts)
+
+
+def consult_knowledge(projet: str, **criteria) -> dict:
+    """
+    Consultation des connaissances partagées avant une analyse (knowledge_tools.consult) : message et documents
+    retenus affichés ; {"bloc": "", "documents": []} si la fonction est désactivée. Jamais bloquant.
+    """
+    if not knowledge_tools.enabled():
+        return {"bloc": "", "documents": []}
+    shared = knowledge_tools.consult(projet, **criteria)
+    print(f"[CONNAISSANCES] {shared['message']}" + "".join(f"\n    {p}" for p in shared["documents"]))
+    return shared
+
+
+def produced(path: str, since: float) -> bool:
+    """Le fichier a-t-il été écrit pendant cette exécution ?"""
+    return bool(path) and os.path.exists(path) and os.path.getmtime(path) >= since
+
+
+def flush_knowledge_outbox() -> None:
+    """Au démarrage : dépose les documents restés en file locale (partage indisponible lors d'un dépôt)."""
+    if not (knowledge_tools.enabled() and knowledge_tools.outbox_count()):
+        return
+    result = knowledge_tools.flush_outbox()
+    for message in result["messages"]:
+        print(f"[CONNAISSANCES] {message}")
+    print(f"[CONNAISSANCES] File locale : {result['deposes']} document(s) déposé(s), {result['restants']} en attente.")
+
+
+def ticket_client(args, project: str) -> str:
+    """Client d'une analyse de ticket, déduit du dépôt client ('' pour un projet du socle seul)."""
+    if project.upper() in std_only_projects() or args.client_repo == "STD_ONLY":
+        return ""
+    return projets.client_name_from_repo(args.client_repo or os.getenv("BITBUCKET_CLIENT_REPO_PATH", ""))
+
+
+def print_draft_status(issue_key: str) -> None:
+    """Statut de publication de l'analyse : brouillon tant que l'utilisateur ne l'a pas validée."""
+    state = publication.status(issue_key)
+    print(f"[PUBLICATION] {issue_key} : {state['libelle']}."
+          + ("" if state["publiee"] else " Elle sera publiée dans Jira à la validation de l'utilisateur."))
+
+
+def check_jira_untouched(step: str, before: dict, keys: list) -> bool:
+    """Compare l'état Jira relevé avant l'étape à l'état actuel : toute modification par l'agent est une erreur."""
+    after = jira_guard.snapshot(keys, step)
+    changed = jira_guard.changes(before, after)
+    if changed:
+        print(f"[JIRA] ❌ Jira modifié pendant l'étape {step} alors que l'analyse n'est pas validée : "
+              f"{', '.join(changed)}. Vérifiez le ticket dans Jira ; l'analyse locale n'est pas enregistrée.")
+        return False
+    unreadable = jira_guard.unreadable(after)
+    if unreadable:
+        print(f"[JIRA] ⚠️ État Jira illisible après l'étape ({', '.join(unreadable)}) : contrôle incomplet.")
+    print("[JIRA] Contrôle : aucune modification Jira pendant l'étape.")
+    return True
 
 
 def deleguer(nom: str, argv: list) -> int:

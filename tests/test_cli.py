@@ -35,3 +35,18 @@ def test_delegation_avec_les_memes_arguments(tmp_path, monkeypatch):
 def test_limite_d_usage_reconnue():
     assert cli.usage_limit_hit("You've hit your session limit")
     assert cli.usage_limit_reset("You've hit your 5-hour limit · resets 7:30pm") == "resets 7:30pm"
+
+
+def test_fonctions_communes_des_etapes(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from agent_socle import projets
+    assert projets.client_name_from_repo("https://git.example.io/projects/ACME") == "acme"
+    monkeypatch.setenv("STD_ONLY_PROJECTS", "OXY")
+    assert cli.ticket_client(SimpleNamespace(client_repo="C:/dev/client_acme"), "ODA") == "acme"
+    assert cli.ticket_client(SimpleNamespace(client_repo="STD_ONLY"), "ODA") == ""
+    fichier = tmp_path / "f.md"
+    fichier.write_text("x", encoding="utf-8")
+    assert cli.produced(str(fichier), 0) and not cli.produced(str(fichier), 1e12)
+    assert cli.format_jira_context({}, 100) == ""
+    assert "TRONQUÉ" in cli.format_jira_context({"issue_key": "A-1", "description": "d" * 500}, 100)
+    assert cli.CLAUDE_MODEL_ENV["besoin"] and cli.ODATIO_DOCS_STEPS["cadrage-reponses"] == "analyse"

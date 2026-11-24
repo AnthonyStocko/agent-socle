@@ -11,6 +11,7 @@ http://localhost:8512) et, si elle ne répond pas, lit les mêmes sources direct
 """
 import json
 import os
+import re
 import tomllib
 import urllib.error
 import urllib.request
@@ -99,3 +100,19 @@ def local(chemin: str):
     if chemin.rstrip("/") == "/sante":
         return {"ok": True, "source": "locale"}
     return None
+
+
+def client_name_from_repo(repo: str) -> str:
+    """
+    Nom du client déduit du dépôt saisi, en minuscules :
+    https://git.kiscloud.io/projects/CLIENT -> client ; .../scm/client/odatio-client.git -> client ;
+    clone local .tmp/client_CLIENT ou C:/dev/client -> client.
+    """
+    repo = (repo or "").strip().rstrip("/\\")
+    if not repo:
+        return ""
+    match = re.search(r"/projects/([^/]+)", repo) or re.search(r"/scm/([^/]+)/", repo)
+    name = match.group(1) if match else re.split(r"[\\/]", repo)[-1]
+    if name.lower().startswith("client_"):
+        name = name[len("client_"):]
+    return re.sub(r"[^a-z0-9_-]", "", name.lower())
