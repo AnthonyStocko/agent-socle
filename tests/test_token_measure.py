@@ -1,22 +1,15 @@
-"""Mesure du contexte des appels Claude (tools/token_measure.py, tools/token_report.py, main.report_token_usage)."""
+"""Mesure du contexte des appels Claude (tools/token_measure.py, tools/token_report.py, agent_socle.cli.report_token_usage)."""
 import csv
-import importlib
-import io
 import json
 import os
-import sys
 
 from agent_socle import token_measure, token_report
 
 
 def _main():
-    """main reconfigure sys.stdout à l'import : importé sous des flux temporaires (comme test_cucumber_import)."""
-    saved = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
-    try:
-        return importlib.import_module("main")
-    finally:
-        sys.stdout, sys.stderr = saved
+    """report_token_usage et sa table (TOKEN_USAGE_CSV, TOKEN_USAGE_FIELDS) : agent_socle.cli (extraits de main.py)."""
+    from agent_socle import cli
+    return cli
 
 
 def _transcript(base, session, entries):
