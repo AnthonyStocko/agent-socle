@@ -19,6 +19,8 @@ from agent_socle import (groundcover_tools, jira_guard, knowledge_tools, mcp_ser
                          publication, token_measure)
 from agent_socle.jira_tools import std_only_projects
 from agent_socle.chemins import DATA_DIR
+from agent_socle import db_tools
+SOCLE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Modèles communs à tous les agents (token_saving_rules, odatio_docs, db_access)
 SOCLE_PROMPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts")
@@ -478,6 +480,90 @@ def check_jira_untouched(step: str, before: dict, keys: list) -> bool:
         print(f"[JIRA] ⚠️ État Jira illisible après l'étape ({', '.join(unreadable)}) : contrôle incomplet.")
     print("[JIRA] Contrôle : aucune modification Jira pendant l'étape.")
     return True
+
+
+def _safe_memory(action, *args, **kwargs) -> bool:
+    """La capitalisation ne doit jamais faire échouer une étape réussie."""
+    try:
+        action(*args, **kwargs)
+        return True
+    except Exception as e:
+        print(f"[MÉMOIRE] ⚠️ Capitalisation impossible ({e})")
+        return False
+
+
+def share_file(path: str, projet: str, doc_type: str, sujet: str, **fields) -> dict:
+    """share_knowledge du contenu d'un fichier produit ({} s'il est absent)."""
+    return share_knowledge(_read_text(path), projet, doc_type, sujet, **fields) if path else {}
+
+
+# Formulations du bloc base propres à l'étape (défaut : cadrage, révision et patch d'un ticket)
+DB_BLOCK_WORDING = {
+    "default": {
+        "db_usage": "les données du cas décrit dans le ticket",
+        "db_findings_target": "la Partie 2 (Analyse Technique) du cadrage",
+        "db_private_targets": "dans le cadrage,\n  dans Jira ni dans le patch",
+        "db_max_commands": "8",
+    },
+    "generate-cucumber-client": {
+        "db_error_rule": "DB_ERROR=… dû à TA requête (colonne ou table inexistante, jointure fausse) : corrige-la "
+                         "avec les colonnes réelles que donne l'erreur (sinon un describe de toutes les tables de la "
+                         "requête en une commande), sans deviner les colonnes (« id » n'est pas toujours la clé). "
+                         "N'abandonne la base que si la connexion elle-même échoue, et signale-le en une ligne.",
+        "db_usage": "le paramétrage qui active ou conditionne les spécifiques du lot, ainsi que les valeurs de "
+                    "référence utiles aux jeux de données des scénarios (articles, emplacements, statuts, codes "
+                    "existants). Une donnée de référence introuvable ou un échec « donnée de référence absente » se "
+                    "vérifie en base avant d'être créé dans le Background ou signalé",
+        "db_findings_target": "ta réponse finale (champ « raison » d'un lot, « restantes » d'une correction), et "
+                              "appuie les jeux de données des scénarios sur ces valeurs réelles",
+        "db_private_targets": "dans les scénarios,\n  les Step Definitions ni le JSON final",
+        "db_max_commands": "3",
+    },
+}
+
+
+def build_db_block(db_schema: str, python_exe: str, workspace_dir: str, step: str = "default",
+                   profile: str = "") -> str:
+    """
+    Bloc de prompt de l'accès base en lecture seule ('' si non demandé ou non configuré). `profile` « cucumber » :
+    base de l'environnement où sont joués les tests (CUCUMBER_DB_*, à défaut DB_*), passée à l'agent par --profile.
+    """
+    previous = db_tools.set_profile(profile)
+    try:
+        return _build_db_block(db_schema, python_exe, workspace_dir, step, profile)
+    finally:
+        db_tools.set_profile(previous)
+
+
+def _build_db_block(db_schema: str, python_exe: str, workspace_dir: str, step: str, profile: str) -> str:
+    if not db_schema and db_tools.config_prefix() != "DB_":
+        # Base Cucumber renseignée : son schéma par défaut (CUCUMBER_DB_SCHEMA)
+        db_schema = db_tools.get_db_config()["schema"]
+    if not db_schema:
+        return ""
+    if not db_tools.is_valid_identifier(db_schema):
+        print(f"[BDD] ⚠️ Schéma '{db_schema}' invalide : l'agent travaillera sans la base.")
+        return ""
+    if not db_tools.is_db_configured():
+        print(f"[BDD] ⚠️ Schéma '{db_schema}' demandé mais connexion non configurée (onglet Configuration) : "
+              f"l'agent travaillera sans la base.")
+        return ""
+    db_type = db_tools.get_db_config()["type"]
+    print(f"[BDD] Accès en lecture seule activé : {db_tools.describe_db_target()}, schéma {db_schema}.")
+    db_cli = os.path.join(SOCLE_DIR, "db_tools.py")
+    base_cmd = f'"{python_exe}" "{db_cli}" --schema {db_schema}' + (f" --profile {profile}" if profile else "")
+    if db_type == "sqlserver":
+        schema_hint = f"Sous SQL Server, préfixe les tables par le schéma ({db_schema}.NOM_TABLE)."
+    else:
+        schema_hint = f"Les noms de tables non qualifiés sont résolus dans le schéma {db_schema}."
+    wording = dict(DB_BLOCK_WORDING.get(step, DB_BLOCK_WORDING["default"]))
+    wording.setdefault("db_error_rule", "Si une commande renvoie DB_ERROR=…, n'insiste pas : poursuis sans la base "
+                                        "et signale-le en une ligne.")
+    if step == "generate-cucumber-client":
+        # Les lots prouvent l'existence des données et choisissent les codes des jeux de données en base
+        wording["db_max_commands"] = str(_env_int("CUCUMBER_DB_MAX_COMMANDS", 20))
+    return "\n" + render_prompt("db_access", db_type=db_type, db_schema=db_schema, base_cmd=base_cmd,
+                                schema_hint=schema_hint, **wording)
 
 
 def deleguer(nom: str, argv: list) -> int:

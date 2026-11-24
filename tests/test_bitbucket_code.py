@@ -178,12 +178,7 @@ def test_client_source_unresolved_local_folders(tmp_path):
 
 
 def test_prompt_block_renders():
-    import importlib, io, sys
-    saved = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
-    try:
-        main = importlib.import_module("main")
-    finally:
-        sys.stdout, sys.stderr = saved
-    text = main.render_prompt("std_bitbucket_code", cli="PY BB", work_root="/w")
+    # Modèle commun du socle (agent_socle/prompts), rendu par agent_socle.cli
+    from agent_socle import cli
+    text = cli.render_prompt("std_bitbucket_code", cli="PY BB", work_root="/w")
     assert "PY BB grep DEPOT" in text and "PY BB checkout DEPOT" in text and "'/w'" in text

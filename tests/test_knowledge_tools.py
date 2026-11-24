@@ -301,23 +301,13 @@ def test_publish_never_raises(share, monkeypatch):
 
 
 def test_main_production_points_helpers(share, monkeypatch):
-    import importlib
-    import io
-    import sys
-    saved = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
-    try:
-        main = importlib.import_module("main")
-    finally:
-        sys.stdout, sys.stderr = saved
-    specifics = {"S1": {"id": "S1", "libelle": "depot | dossier", "type": "java", "couverture": "partiel"}}
-    table = main.inventory_markdown("clientfictif", specifics)
-    assert "| S1 | depot / dossier | java | partiel |" in table
-    assert "PROJX-1-a.patch" in main.patch_recap("PROJX-1", ["x/PROJX-1-a.patch"], "récapitulatif")
-    result = main.share_knowledge(table, "CLIENTFICTIF", "cucumber-inventaire", "Inventaire", client="clientfictif")
-    assert result["statut"] == kt.PUBLISHED and main.share_knowledge("  ", "P", "autre", "vide") == {}
+    # inventory_markdown (Cucumber) et patch_recap (Lancement) sont testés avec leur agent ; ici share_knowledge
+    from agent_socle import cli
+    table = "| S1 | depot / dossier | java | partiel |"
+    result = cli.share_knowledge(table, "CLIENTFICTIF", "cucumber-inventaire", "Inventaire", client="clientfictif")
+    assert result["statut"] == kt.PUBLISHED and cli.share_knowledge("  ", "P", "autre", "vide") == {}
     monkeypatch.setenv("AGENT_KNOWLEDGE_DIR", "")
-    assert main.share_knowledge(table, "CLIENTFICTIF", "cucumber-inventaire", "Inventaire") == {}
+    assert cli.share_knowledge(table, "CLIENTFICTIF", "cucumber-inventaire", "Inventaire") == {}
 
 
 # ---------------------------------------------------------------------------
