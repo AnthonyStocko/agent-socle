@@ -5,12 +5,11 @@ Les chemins des journaux sont lus à chaque appel (AGENT_JOURNAL_PATH, AGENT_RUN
 """
 import os
 import re
-import subprocess
 import time
 
 import streamlit as st
 
-from agent_socle import auth_tools
+from agent_socle import auth_tools, taches
 from agent_socle.jira_tools import fetch_tickets_data, parse_issue_keys
 from agent_socle.chemins import DATA_DIR
 
@@ -37,58 +36,159 @@ def run_log_path(cmd: list) -> str:
 
 def run_main_step(cmd: list, on_line=None, quiet: bool = True) -> int:
     """
-    Lance main.py (`on_line` : appelé à chaque ligne). Toute la sortie va dans le journal technique
+    Lance main.py hors de la session (agent_socle.taches : relais détaché, registre des travaux en cours) et suit son
+    journal en direct (`on_line` : appelé à chaque ligne). Toute la sortie va dans le journal technique
     (.tmp/journal_technique.log, panneau « Journal technique » replié de l'en-tête) et dans le journal conservé de
-    l'exécution (.tmp/logs/<date>_<étape>.log) ; par défaut (`quiet`), rien de
-    brut n'est affiché : seul un indicateur d'avancement, et la dernière exécution est gardée pour en tirer des
-    phrases (journal_phrases). `quiet=False` réservé au diagnostic. Renvoie le code retour.
+    l'exécution (.tmp/logs/<date>_<étape>.log), écrits par le relais : fermer la page n'interrompt pas le
+    traitement, qui reste dans « Travaux en cours ». Par défaut (`quiet`), rien de brut n'est affiché : seul un
+    indicateur d'avancement, et la dernière exécution est gardée pour en tirer des phrases (journal_phrases).
+    `quiet=False` réservé au diagnostic. Renvoie le code retour.
     """
-    os.makedirs(os.path.dirname(journal_path()), exist_ok=True)
-    if os.path.exists(journal_path()) and os.path.getsize(journal_path()) > JOURNAL_MAX_BYTES:
-        os.replace(journal_path(), journal_path() + ".1")
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+    os.makedirs(run_logs_dir(), exist_ok=True)
+    log_path = run_log_path(cmd)
+    st.session_state["last_run_log"] = log_path
+    process, tache = taches.lancer(
+        agent_courant(cmd), cmd, log_path, journal_path(), auteur=auth_tools.current_author(),
+        contexte=contexte_courant(),
         # Auteur connecté (AGENT_AUTH) transmis à l'exécution : décisions, bilans et connaissances le tracent
-        env={**auth_tools.subprocess_env(), "PYTHONIOENCODING": "utf-8"},
-    )
+        env={**auth_tools.subprocess_env(), "PYTHONIOENCODING": "utf-8"})
+    st.session_state["tache_suivie"] = [tache["agent"], tache["id"]]
     output_container = st.empty() if not quiet else None
     spinner = st.spinner("Traitement en cours… (sortie détaillée : « Journal technique »)") \
         if quiet else None
     if spinner:
         spinner.__enter__()
     logs, lines = "", []
-    os.makedirs(run_logs_dir(), exist_ok=True)
-    log_path = run_log_path(cmd)
-    st.session_state["last_run_log"] = log_path
-    with open(journal_path(), "a", encoding="utf-8") as journal, open(log_path, "w", encoding="utf-8") as run_log:
-        journal.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} — {' '.join(cmd[1:])[:300]}\n")
-        run_log.write(f"===== {' '.join(cmd[1:])[:300]}\n")
-        author = auth_tools.current_author()
-        if author:
-            journal.write(f"===== lancé par {author}\n")
-            run_log.write(f"===== lancé par {author}\n")
-        for line in process.stdout:
-            journal.write(line)
-            run_log.write(line)
-            run_log.flush()
-            lines.append(line.rstrip("\n"))
-            if output_container is not None:
-                logs += line
-                output_container.code(logs, language="text")
-            if on_line:
-                on_line(line)
-        process.wait()
-        journal.write(f"===== code retour {process.returncode} — journal de l'exécution : {log_path}\n")
-        run_log.write(f"===== code retour {process.returncode}\n")
+
+    def ligne(line: str) -> None:
+        nonlocal logs
+        lines.append(line.rstrip("\n"))
+        if output_container is not None:
+            logs += line
+            output_container.code(logs, language="text")
+        if on_line:
+            on_line(line)
+
+    if getattr(process, "stdout", None) is not None:
+        # Sortie fournie par le processus lui-même (exécution simulée) : relayée ici, comme le ferait le relais
+        returncode = taches.relayer(tache, cmd, process.stdout, process.wait, on_line=ligne)
+    else:
+        returncode = suivre(tache, ligne)
     if spinner:
         spinner.__exit__(None, None, None)
     st.session_state["last_run_lines"] = lines
-    return process.returncode
+    return returncode
+
+
+def suivre(tache: dict, on_line, pause: float = 0.5) -> int:
+    """Suit le journal d'une tâche jusqu'à sa fin (lignes complètes transmises à `on_line`) ; renvoie son code."""
+    position, reste = 0, ""
+    while True:
+        etat = taches.actualiser(taches.lire(tache["agent"], tache["id"]) or tache)
+        try:
+            with open(tache["journal"], encoding="utf-8", errors="replace") as f:
+                f.seek(position)
+                bloc = f.read()
+                position = f.tell()
+        except OSError:
+            bloc = ""
+        reste += bloc
+        *completes, reste = reste.split("\n")
+        for line in completes:
+            if not line.startswith("===== "):
+                on_line(line + "\n")
+        if etat.get("statut") != "en_cours" and not bloc:
+            if reste and not reste.startswith("===== "):
+                on_line(reste)
+            code = etat.get("code_retour")
+            return int(code) if code is not None else 1
+        time.sleep(pause)
+
+
+# ---------------------------------------------------------------------------
+# Travaux en cours : nom de l'agent, contexte de la page, panneau
+# ---------------------------------------------------------------------------
+
+# Nom de l'agent (registre du manager : integration, lancement, cucumber, revue-pr…), renseigné par son app.py
+AGENT = ""
+# Clés de st.session_state qui permettent de revenir où l'on en était (ticket, client, étape du workflow)
+CONTEXTE = ()
+STATUTS_AFFICHES = {"en_cours": "⏳ en cours", "terminee": "✅ terminée", "echec": "❌ en échec",
+                    "interrompue": "⚠️ interrompue", "arretee": "⏹️ arrêtée"}
+
+
+def agent_courant(cmd: list = ()) -> str:
+    if AGENT:
+        return AGENT
+    script = next((c for c in cmd if str(c).endswith("main.py")), "")
+    dossier = os.path.basename(os.path.dirname(os.path.abspath(script))) if script else ""
+    return dossier[len("agent-"):] if dossier.startswith("agent-") else (dossier or "agent")
+
+
+def auteur() -> str:
+    return auth_tools.current_author() or "local"
+
+
+def contexte_courant() -> dict:
+    return {cle: st.session_state[cle] for cle in CONTEXTE if cle in st.session_state}
+
+
+def restaurer_contexte() -> None:
+    """À la (re)connexion : choix enregistrés de l'auteur rechargés, une fois par session, sans écraser la page."""
+    if st.session_state.get("contexte_restaure") or not CONTEXTE:
+        return
+    st.session_state["contexte_restaure"] = True
+    for cle, valeur in taches.charger_contexte(auteur(), agent_courant()).items():
+        if cle in CONTEXTE and cle not in st.session_state:
+            st.session_state[cle] = valeur
+
+
+def memoriser_contexte() -> None:
+    """Fin de page : choix courants enregistrés pour l'auteur (.tmp/sessions/<auteur>/<agent>.json)."""
+    if CONTEXTE:
+        taches.enregistrer_contexte(auteur(), agent_courant(), contexte_courant())
+
+
+def reprendre(tache: dict) -> None:
+    """Page remise sur le ticket ou le client de la tâche ; son journal est suivi dans le panneau."""
+    for cle, valeur in (tache.get("contexte") or {}).items():
+        st.session_state[cle] = valeur
+    st.session_state["tache_suivie"] = [tache["agent"], tache["id"]]
+
+
+@st.fragment(run_every=5)
+def travaux_en_cours() -> None:
+    """Panneau « Travaux en cours » : tâches de l'agent (les miennes d'abord), journal rafraîchi, reprise, arrêt."""
+    liste = taches.lister(agent_courant(), auth_tools.current_author())
+    if not liste:
+        return
+    suivie = st.session_state.get("tache_suivie") or ["", ""]
+    actives = [t for t in liste if t["statut"] == "en_cours"]
+    with st.expander(f"Travaux en cours ({len(actives)})" if actives else "Travaux récents", icon=":material/pending:",
+                     expanded=bool(actives) or suivie[1] in [t["id"] for t in liste]):
+        for tache in liste[:8]:
+            with st.container(border=True):
+                gauche, droite = st.columns([3, 2])
+                gauche.markdown(f"**{tache['etape']}** {tache.get('cible') or ''} — "
+                                f"{STATUTS_AFFICHES.get(tache['statut'], tache['statut'])} · {taches.duree(tache)}"
+                                + (f" · {tache['auteur']}" if tache.get("auteur") else ""))
+                boutons = droite.columns(3)
+                if tache.get("contexte") and boutons[0].button("Reprendre", key=f"reprendre_{tache['id']}",
+                                                                icon=":material/play_arrow:"):
+                    reprendre(tache)
+                    st.rerun(scope="app")
+                if tache["statut"] != "en_cours" and boutons[1].button(
+                        "Voir le résultat", key=f"resultat_{tache['id']}", icon=":material/description:"):
+                    st.session_state["tache_suivie"] = [tache["agent"], tache["id"]]
+                if tache["statut"] == "en_cours":
+                    with boutons[2].popover("Arrêter", icon=":material/stop:"):
+                        st.caption("Le traitement est arrêté (relais et étape) ; le journal reste consultable.")
+                        if st.button("Confirmer l'arrêt", key=f"arreter_{tache['id']}", type="primary"):
+                            taches.arreter(tache["agent"], tache["id"])
+                            st.rerun(scope="fragment")
+                if tache["id"] == suivie[1] or tache["statut"] == "en_cours":
+                    st.code(taches.fin_du_journal(tache, 200 if tache["id"] == suivie[1] else 8) or "(journal vide)",
+                            language="text")
 
 
 def journal_phrases(prefix: str) -> list:

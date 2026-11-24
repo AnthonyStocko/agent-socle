@@ -1,2 +1,2 @@
 """Socle commun des agents Savoye : briques techniques partagées, sans logique métier."""
-__version__ = "0.6.0"
+__version__ = "0.7.0"
