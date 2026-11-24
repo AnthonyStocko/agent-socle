@@ -4,10 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-socle"
-version = "0.2.0"
+version = "0.3.0"
 description = "Socle commun des agents Savoye (Claude Code, Jira, Bitbucket, Jenkins, journal, chemins)"
 requires-python = ">=3.11"
 dependencies = ["streamlit[auth]>=1.64", "python-dotenv>=1.0", "requests>=2.31", "sqlalchemy>=2.0"]
 
 [tool.setuptools]
 packages = ["agent_socle"]
+
+[tool.setuptools.package-data]
+agent_socle = ["prompts/*.md"]
