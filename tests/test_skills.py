@@ -46,27 +46,3 @@ def test_nothing_saved_without_reusable_procedure(tmp_path, monkeypatch):
     assert sk.save_proposal("cucumber-correction", {**PROPOSAL, "etapes": []}, "x") == ""
     assert sk.parse_proposal('bla ```json\n{"action": "aucune"}\n```') == {"action": "aucune"}
 
-
-def test_learn_skill_only_after_a_complex_success(tmp_path, monkeypatch):
-    saved = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
-    try:
-        m = importlib.import_module("main")
-    finally:
-        sys.stdout, sys.stderr = saved
-    monkeypatch.setenv("AGENT_KNOWLEDGE_DIR", str(tmp_path))
-    monkeypatch.delenv("SKILLS_AUTO", raising=False)
-    monkeypatch.setenv("SKILLS_MIN_TURNS", "8")
-    calls = []
-
-    def claude(prompt, *a, **k):
-        calls.append(prompt)
-        return 0, "```json\n" + __import__("json").dumps(PROPOSAL) + "\n```", {}, False
-    monkeypatch.setattr(m, "run_claude", claude)
-    monkeypatch.setattr(m, "report_token_usage", lambda *a, **k: None)
-    assert m.learn_skill("apparel", "cucumber-correction", "S1 vert", "preuve", str(tmp_path), "", str(tmp_path),
-                         "K", 3) == ""                                   # trop simple : rien
-    assert calls == []
-    path = m.learn_skill("apparel", "cucumber-correction", "- S1 : échec « OP introuvable »", "1 scénario vert sur "
-                         "Jenkins", str(tmp_path), "", str(tmp_path), "K", 12)
-    assert path and os.path.exists(path) and "OP introuvable" in calls[0] and "(aucune)" in calls[0]

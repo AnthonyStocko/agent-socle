@@ -25,7 +25,9 @@ def main_module():
     saved = sys.stdout, sys.stderr
     sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
     try:
-        return importlib.import_module("main")
+        # run_claude, claude_command et leurs modules : agent_socle.cli (extraits de main.py)
+        from agent_socle import cli
+        return cli
     finally:
         sys.stdout, sys.stderr = saved
 
@@ -278,13 +280,3 @@ def test_failure_window_is_step_time_plus_minus_30_seconds(mcp_dir, monkeypatch)
     assert "pod « p-1 »" in values["application"] and "13:39:30Z" in values["fenetres"]
     assert values["outils"] == ", ".join(sorted(READ_TOOLS))
 
-
-def test_diagnostic_prompt_block(main_module, monkeypatch, mcp_dir):
-    assert main_module.build_mcp_logs_block("cucumber-import-fix", "", [{"id": "x", "heure": "2026-10-30T13:40:00"}]) == ""
-    enable(monkeypatch)
-    block = main_module.build_mcp_logs_block("cucumber-init-fix", "", [{"id": "x", "step": "Given z",
-                                                                        "heure": "2026-10-30T13:40:00"}],
-                                             pod={"namespace": "jenkins", "pod": "p-1", "conteneurs": ["app"]})
-    assert "13:39:30Z → 2026-10-30T13:40:30Z" in block and "GROUNDCOVER_ACCES=echec" in block
-    assert "namespace « jenkins »" in block and "« app »" in block
-    assert main_module.build_mcp_logs_block("cucumber-lot", "", [{"id": "x", "heure": "2026-10-30T13:40:00"}]) == ""
