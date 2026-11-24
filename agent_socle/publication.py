@@ -6,6 +6,7 @@ brouillon local '<TICKET>-cadrage.md' (dossier courant) comparé à l'empreinte 
 import hashlib
 import json
 import os
+from datetime import datetime
 
 from agent_socle.chemins import DATA_DIR
 
@@ -63,3 +64,13 @@ def status(issue_key: str, text: str = None) -> dict:
         label = "Analyse non publiée (brouillon)"
     return {"publiee": published, "publiee_le": published_at, "libelle": label,
             "message": record.get("message", "") if published else ""}
+
+
+def record_publication(issue_key: str, text: str, when: datetime = None, **details) -> dict:
+    """Mémorise que `text` est la version publiée dans Jira (date, empreinte et forme de la publication)."""
+    record = {"empreinte": _fingerprint(text),
+              "publiee_le": (when or datetime.now()).isoformat(timespec="minutes"), **details}
+    os.makedirs(PUBLICATION_DIR, exist_ok=True)
+    with open(_record_path(issue_key), "w", encoding="utf-8") as f:
+        json.dump(record, f, ensure_ascii=False, indent=2)
+    return record
