@@ -1,7 +1,7 @@
 # agent-socle
 
 Briques techniques communes aux agents Savoye (issues d'`agent-scrum-master`, comportement inchangé) :
-Jira, Bitbucket, Jenkins, base de données (lecture), Groundcover, MCP, masquage des secrets, `.env`, connexion OIDC,
+Jira, Bitbucket, Jenkins, base de données (lecture), Groundcover (et sa configuration dans l'IHM : `ihm_groundcover`), MCP, masquage des secrets, `.env`, connexion OIDC,
 mesure des jetons, connaissances partagées, mémoire des tickets, registre des livraisons, git de l'agent,
 registre des projets en lecture (`projets` : façade sur les projets Cucumber et les applications du manager, client
 de l'API d'agent-projets sur 8512 avec repli local), configuration commune transmise par le manager.
