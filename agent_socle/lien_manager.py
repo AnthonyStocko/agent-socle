@@ -11,13 +11,22 @@ Paramètres d'adresse (contrat commun aux agents, agent-manager-savoye/manager/l
 - contexte : résumé du manager, affiché en tête de page.
 Un lien n'est appliqué qu'une fois par session (signature) : les choix faits ensuite dans l'IHM sont gardés. Toute
 valeur invalide est ignorée. Aucune action (Jira, Git, Jenkins, Claude) n'est déclenchée par un lien.
+
+Construction (``parametres``, ``construire``) : partagée par agent-manager-savoye (manager/liens.py, qui y ajoute ses
+onglets et ses redirections) et par les agents qui ouvrent un autre agent (ex. agent-retrospective → dev-tool avec
+``page=developper&depot=…&demande=…``). Les paramètres complets sont alors
+``page, ticket, projet, conversation, question, demande, depot, contexte`` ; ``demande`` et ``depot`` sont lus par
+dev-tool, pas par ``lire``. Aucun secret ni donnée nominative dans un lien : il passe par l'historique du navigateur.
 """
 import re
+from urllib.parse import urlencode
 
 TEXTE_MAX = 1500
 CONTEXTE_MAX = 600
 _TICKET = re.compile(r"[A-Z][A-Z0-9_]+-\d+")
 _PROJET = re.compile(r"[\w .@-]{1,80}")
+_CONVERSATION = re.compile(r"[0-9]{8}-[0-9]{6}-[0-9]{6}")
+PARAMETRES = ("page", "ticket", "projet", "conversation", "question", "demande", "depot", "contexte")
 
 
 def _texte(valeur, limite: int) -> str:
@@ -53,3 +62,37 @@ def projet_connu(projet: str, connus) -> str:
 
 def projet_jira(ticket: str) -> str:
     return ticket.rsplit("-", 1)[0] if ticket else ""
+
+
+def _borne(valeur, limite: int) -> str:
+    """Texte coupé à `limite` caractères, avec « … » s'il est tronqué."""
+    valeur = str(valeur or "").strip()
+    return valeur if len(valeur) <= limite else valeur[:limite - 1].rstrip() + "…"
+
+
+def parametres(pages=(), page: str = "", ticket: str = "", projet: str = "", conversation: str = "",
+               question: str = "", demande: str = "", depot: str = "", contexte: str = "") -> dict:
+    """
+    Paramètres validés d'un lien vers un agent dont les pages connues sont `pages` (valeurs vides ou invalides
+    retirées ; {} s'il ne reste rien, sinon source=manager en tête).
+    """
+    ticket = str(ticket or "").strip().upper()
+    valeurs = {
+        "page": page if page and page in pages else "",
+        "ticket": ticket if _TICKET.fullmatch(ticket) else "",
+        "projet": str(projet or "").strip() if _PROJET.fullmatch(str(projet or "").strip()) else "",
+        "conversation": str(conversation or "").strip()
+        if _CONVERSATION.fullmatch(str(conversation or "").strip()) else "",
+        "question": _borne(question, TEXTE_MAX),
+        "demande": _borne(demande, TEXTE_MAX),
+        "depot": str(depot or "").strip() if _PROJET.fullmatch(str(depot or "").strip()) else "",
+        "contexte": _borne(contexte, CONTEXTE_MAX),
+    }
+    retenus = {k: v for k, v in valeurs.items() if v}
+    return {"source": "manager", **retenus} if retenus else {}
+
+
+def construire(url: str, pages=(), **valeurs) -> str:
+    """Adresse de l'agent complétée des paramètres préremplis (l'adresse seule s'il n'y a rien à transmettre)."""
+    params = parametres(pages, **valeurs)
+    return f"{url.rstrip('/')}/?{urlencode(params)}" if params else url
