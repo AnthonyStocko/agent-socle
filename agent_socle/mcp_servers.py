@@ -3,7 +3,8 @@ Serveurs MCP des appels `claude` de l'agent : LISTE FERMÉE. Par défaut, aucun 
 Groundcover (lecture des logs serveur de l'environnement de test) peut être ajouté, et seulement pour les étapes de
 diagnostic (DIAGNOSTIC_STEPS) : jamais pour l'analyse d'un ticket ni la génération d'un patch.
 
-Configuration (onglet ⚙️, section « Serveurs MCP ») :
+Configuration (section « Serveurs MCP » de la configuration de l'agent, composant agent_socle.ihm_groundcover ;
+désignation de la page dans les messages : definir_page) :
 - GROUNDCOVER_MCP_URL : adresse du serveur MCP, donnée par « Connect to MCP » dans Groundcover (la commande ou la
   configuration JSON copiée y est aussi acceptée : l'adresse et les en-têtes non secrets en sont extraits) ;
 - GROUNDCOVER_MCP_HEADERS : en-têtes non secrets éventuels (« Nom: valeur ; Nom: valeur »), jamais de jeton ;
@@ -43,6 +44,10 @@ URL_ENV, HEADERS_ENV, ENABLED_ENV, TOOLS_ENV = ("GROUNDCOVER_MCP_URL", "GROUNDCO
                                                 "GROUNDCOVER_MCP_ENABLED", "GROUNDCOVER_MCP_TOOLS")
 WINDOW_SECONDS = 30
 ACCESS_MARKER = "GROUNDCOVER_ACCES=echec"
+# Où se trouvent « Tester » et « Se connecter à Groundcover » : propre à chaque agent (definir_page), transmis aux
+# processus lancés par l'IHM (main.py) par l'environnement ; à défaut, formulation neutre
+PAGE_ENV = "GROUNDCOVER_MCP_PAGE"
+DEFAULT_PAGE = "configuration de l'agent, section Serveurs MCP"
 STATUS_LABELS = {"non configuré": "non configuré", "désactivé": "désactivé", "non testé": "non testé",
                  "connecté": "connecté", "expiré": "connexion expirée ou absente", "erreur": "erreur"}
 
@@ -64,6 +69,18 @@ _RUNNING_ON = re.compile(r"\bRunning on ([\w.-]+) in /")
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
+def definir_page(texte: str) -> None:
+    """Désignation, par l'agent, de la page où sont « Tester » et « Se connecter à Groundcover » (messages)."""
+    if (texte or "").strip():
+        os.environ[PAGE_ENV] = texte.strip()
+    else:
+        os.environ.pop(PAGE_ENV, None)
+
+
+def page() -> str:
+    return os.getenv(PAGE_ENV, "").strip() or DEFAULT_PAGE
+
 
 def parse_headers(text: str) -> dict:
     """En-têtes « Nom: valeur » séparés par « ; » ou des retours à la ligne."""
@@ -245,7 +262,7 @@ def unavailable_reason(directory: str = "") -> str:
     if not s["active"]:
         return "désactivé"
     if not allowed_tools(directory):
-        return "aucun outil de lecture connu : bouton « Tester » de l'onglet ⚙️ (section Serveurs MCP)"
+        return f"aucun outil de lecture connu : bouton « Tester » ({page()})"
     return ""
 
 
@@ -288,8 +305,8 @@ def record_access_failure(reason: str, directory: str = "") -> dict:
 
 
 def failure_message(reason: str) -> str:
-    return (f"Accès Groundcover en échec ({reason}) : reconnectez-vous (onglet ⚙️, Serveurs MCP, « Se connecter à "
-            f"Groundcover »), sinon exportez les logs à la main (fenêtres de l'analyse) et importez-les avec le run.")
+    return (f"Accès Groundcover en échec ({reason}) : reconnectez-vous ({page()}, « Se connecter à Groundcover »), "
+            f"sinon exportez les logs à la main (fenêtres de l'analyse) et importez-les avec le run.")
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +365,7 @@ def prompt_values(failures: list, namespace: str = "", container: str = "", pod:
 
 
 # ---------------------------------------------------------------------------
-# Connexion et test (onglet ⚙️)
+# Connexion et test (agent_socle.ihm_groundcover.etat_et_connexion)
 # ---------------------------------------------------------------------------
 
 def claude_exe() -> str:
