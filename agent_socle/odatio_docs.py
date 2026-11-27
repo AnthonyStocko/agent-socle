@@ -281,7 +281,7 @@ def extract(html: str, url: str) -> dict:
 
 def _http_get(url: str):
     return requests.get(url, timeout=timeout(), allow_redirects=False, stream=True,
-                        headers={"User-Agent": "agent-scrum-master (lecture de la documentation)"})
+                        headers={"User-Agent": "agents-savoye (lecture de la documentation)"})
 
 
 def _read_body(response) -> str:

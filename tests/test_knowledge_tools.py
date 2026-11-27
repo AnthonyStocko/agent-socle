@@ -6,6 +6,9 @@ import pytest
 from agent_socle import knowledge_tools as kt
 from agent_socle.chemins import DATA_DIR
 
+# .env.example et README des connaissances partagées : dans ce dépôt (repris d'agent-scrum-master, supprimé)
+RACINE_SOCLE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 
 @pytest.mark.parametrize("value, expected", [
     ("", ""),
@@ -487,7 +490,7 @@ def test_import_uploaded_text(share):
 # ---------------------------------------------------------------------------
 
 def test_env_example_has_no_company_value():
-    root = DATA_DIR
+    root = RACINE_SOCLE
     with open(os.path.join(root, ".env.example"), encoding="utf-8") as f:
         values = dict(line.strip().split("=", 1) for line in f if line.startswith("AGENT_KNOWLEDGE_"))
     assert values == {"AGENT_KNOWLEDGE_DIR": "", "AGENT_KNOWLEDGE_AUTHOR": "",
@@ -495,7 +498,7 @@ def test_env_example_has_no_company_value():
 
 
 def test_readme_documents_confidentiality_and_format():
-    root = DATA_DIR
+    root = RACINE_SOCLE
     with open(os.path.join(root, "README.md"), encoding="utf-8") as f:
         readme = f.read()
     assert "## Connaissances partagées" in readme and "lit tous les documents" in readme
