@@ -1,7 +1,7 @@
 """Registre des projets : façade en lecture sur les sources existantes, sans migration.
 
 Deux sources, lues à leur place actuelle :
-- les projets Cucumber d'agent-scrum-master (``<AGENT_DATA_DIR>/.tmp/cucumber/<client>/projet.json``…),
+- les projets Cucumber d'agent-cucumber (``<AGENT_DATA_DIR>/.tmp/cucumber/<client>/projet.json``…),
   ``known_projects`` (extrait de tools/cucumber_detection.py, inchangé) ;
 - les applications du manager (``commun.toml`` de ``SAVOYE_CONFIG_DIR``, défaut ``../agent-manager-savoye/config``),
   sans les secrets (le fichier n'en contient pas ; le .env du manager n'est jamais lu ici).

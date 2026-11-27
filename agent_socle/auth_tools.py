@@ -138,7 +138,7 @@ def require_login(st) -> dict:
                     "« Connexion OIDC »), puis redémarrer l'application.")
         st.stop()
     if not logged_in(st.user):
-        st.title("Scrum Master IA")
+        st.title("Agents Savoye")
         st.info("Connectez-vous avec votre compte de l'entreprise pour accéder à l'application.")
         st.button("Se connecter", type="primary", on_click=st.login, icon=":material/login:")
         st.stop()
